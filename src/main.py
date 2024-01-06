@@ -4,7 +4,7 @@ from typing import Optional, List
 from fastapi_cache.backends.redis import RedisBackend
 
 from fastapi_cache.decorator import cache
-from fastapi import FastAPI, Body, File, HTTPException, UploadFile, status
+from fastapi import FastAPI, Body, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, Response
 from fastapi_cache import FastAPICache
 from pydantic import ConfigDict, BaseModel, Field, EmailStr
