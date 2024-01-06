@@ -1,28 +1,65 @@
 import os
 import time
-from typing import Optional, List
-from fastapi_cache.backends.redis import RedisBackend
+import sentry_sdk
+import motor.motor_asyncio
+import redis
 
-from fastapi_cache.decorator import cache
-from fastapi import FastAPI, Body, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse, Response
-from fastapi_cache import FastAPICache
-from pydantic import ConfigDict, BaseModel, Field, EmailStr
-from pydantic.functional_validators import BeforeValidator
 from minio import Minio
 from redis import asyncio as aioredis
 
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator, Optional, List
+from starlette.middleware.cors import CORSMiddleware
 from typing_extensions import Annotated
-
 from bson import ObjectId
-import motor.motor_asyncio
 from pymongo import ReturnDocument
 
+from fastapi_cache import FastAPICache
+from fastapi_cache.decorator import cache
+from fastapi_cache.backends.redis import RedisBackend
 
-app = FastAPI(
-    title="Student Course API",
-    summary="A sample application showing how to use FastAPI to add a ReST API to a MongoDB collection.",
+from fastapi import FastAPI, Body, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse, Response
+
+from pydantic import ConfigDict, BaseModel, Field, EmailStr
+from pydantic.functional_validators import BeforeValidator
+
+from src.config import app_configs, settings
+
+from src.files.router import file_router
+
+@asynccontextmanager
+async def lifespan(_application: FastAPI) -> AsyncGenerator:
+    # Startup
+    pool = aioredis.ConnectionPool.from_url(
+        str(settings.REDIS_URL), max_connections=10, decode_responses=True, encoding="utf-8"
+    )
+    redis.redis_client = aioredis.Redis(connection_pool=pool)
+    FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
+
+    yield
+
+    if settings.ENVIRONMENT.is_testing:
+        return
+
+    await pool.disconnect()
+
+app = FastAPI(**app_configs, lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=settings.CORS_ORIGINS_REGEX,
+    allow_credentials=True,
+    allow_methods=("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"),
+    allow_headers=settings.CORS_HEADERS,
 )
+
+if settings.ENVIRONMENT.is_deployed:
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.ENVIRONMENT,
+    )
 
 # MongoDb
 client = motor.motor_asyncio.AsyncIOMotorClient("localhost:27017")
@@ -198,33 +235,6 @@ async def delete_student(id: str):
 
     raise HTTPException(status_code=404, detail=f"Student {id} not found")
 
-# Minio
-minioClient = Minio('localhost:9000',
-                access_key='dOKWIe0I3ANYjT5Oq8nR',
-                secret_key='mnHOV6pstUaNVFYeHdlIElM8TnbQwCUjqoHjAKag',
-                secure=False)
-
-@app.post('/upload/')
-async def upload_file(file: UploadFile):
-    minioClient.put_object(
-            bucket_name='test',
-            object_name=file.filename,
-            data=file.file,
-            length=os.fstat(file.file.fileno()).st_size
-        )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-@app.get('/download/{filePath}')
-def download_file(filePath: str):
-    filename = filePath.split("/")[-1]
-    file = minioClient.fget_object(bucket_name='test', object_name=filename, file_path=f"{filename}")
-    return FileResponse(path=file.object_name, filename=file.object_name, media_type='multipart/form-data')
-
-#redis
-@app.on_event("startup")
-async def startup_event():
-    redis = aioredis.from_url("redis://localhost", encoding="utf-8", decode_responses=True)
-    FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
-
-#postgres
-
+app.include_router(
+    file_router
+)

@@ -24,10 +24,14 @@ class Config(BaseSettings):
 
     APP_VERSION: str = "1"
 
+    MINIO_ENDPOINT: str
+    MINIO_ACCESS_KEY: str
+    MINIO_SECRET_KEY: str
+    MINIO_BUCKET_NAME: str
+    MINIO_SECURE: bool
+
 
 
 settings = Config()
 
 app_configs: dict[str, Any] = {"title": "App API"}
-if settings.ENVIRONMENT.is_deployed:
-    app_configs["root_path"] = f"/v{settings.APP_VERSION}"
